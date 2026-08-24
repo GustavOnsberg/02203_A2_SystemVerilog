@@ -1,12 +1,12 @@
 # 02203 Assignment 2 – Edge Detection (SystemVerilog)
 
-This repository contains a **SystemVerilog implementation** of **Assignment 2** in *02203 Design of Digital Systems (Fall 2025)* at DTU.
+This repository contains a **SystemVerilog implementation** of **Assignment 2** in *02203 Design of Digital Systems (Fall 2026)* at DTU.
 
 The goal of this assignment is to design, simulate, and implement a digital system for **edge detection** in images using a custom accelerator and memory interface.
 
 The design flow follows a **top-down, simulation-based methodology** and targets the **Xilinx Nexys 4 DDR / Nexys A7 FPGA board**.
 
-Otto Westy Rasmussen, S203838, S203838@dtu.dk
+Developer: Otto Westy Rasmussen
 
 ## Repository Structure
 
@@ -50,4 +50,3 @@ Otto Westy Rasmussen, S203838, S203838@dtu.dk
 
 ## Notes
 - This repo provides a **SystemVerilog** version of the assignment (original was in VHDL).  
-- Use at your own risk if substituting for the official VHDL files.
