@@ -1,3 +1,4 @@
 *.log
 *.pb
 *venv
+/task2/build
