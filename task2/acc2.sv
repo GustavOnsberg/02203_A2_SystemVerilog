@@ -117,6 +117,7 @@ module acc (
     );
         logic signed [11:0] dx, dy;
         logic        [11:0] mag;
+        logic        [15:0] half, scaled;   // 16 bits: max 765 * 85 = 65025
         begin
             dx = $signed({4'b0, s13}) - $signed({4'b0, s11})
                + 2 * ($signed({4'b0, s23}) - $signed({4'b0, s21}))
@@ -124,8 +125,11 @@ module acc (
             dy = $signed({4'b0, s11}) - $signed({4'b0, s31})
                + 2 * ($signed({4'b0, s12}) - $signed({4'b0, s32}))
                + $signed({4'b0, s13}) - $signed({4'b0, s33});
-            mag = (dx[11] ? -dx : dx) + (dy[11] ? -dy : dy);   // |Dx| + |Dy|, max 2040
-            sobel = (mag > 255) ? 8'd255 : mag[7:0];           // saturate
+            mag = (dx[11] ? -dx : dx) + (dy[11] ? -dy : dy);   // |Dx| + |Dy|, max 1530
+            // scale to 0..254 with shifts and adds: ((mag >> 1) * 85) >> 8
+            half   = 16'(mag >> 1);
+            scaled = (half << 6) + (half << 4) + (half << 2) + half;
+            sobel  = scaled[15:8];
         end
     endfunction
  

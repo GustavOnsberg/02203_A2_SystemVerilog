@@ -4,6 +4,7 @@ usage: python3 check_result.py <source.pgm> <result.pgm>
 Needs numpy; also writes a .png of the result if Pillow is installed.
 All pixels are compared. Boundaries are mirrored (task 4a): a neighbour outside
 the image is a copy of the nearest edge pixel.
+|Dx| + |Dy| is scaled to 8 bits as ((mag >> 1) * 85) >> 8, as in the accelerator.
 """
 import sys
 import numpy as np
@@ -27,7 +28,8 @@ def sobel(img):
         a, b, c = p[r], p[r + 1], p[r + 2]      # image rows r-1, r, r+1
         dx = (s(a, 1) - s(a, -1)) + 2 * (s(b, 1) - s(b, -1)) + (s(c, 1) - s(c, -1))
         dy = (s(a, -1) - s(c, -1)) + 2 * (s(a, 0) - s(c, 0)) + (s(a, 1) - s(c, 1))
-        out[r] = np.minimum(np.abs(dx) + np.abs(dy), 255)
+        mag = np.abs(dx) + np.abs(dy)           # 0..1530
+        out[r] = ((mag >> 1) * 85) >> 8
     return out
 
 
