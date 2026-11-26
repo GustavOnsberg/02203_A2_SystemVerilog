@@ -34,24 +34,22 @@ module acc (
  
     localparam int WORDS_PER_ROW = 88;                 // 352 / 4
     localparam int DST_BASE      = 25344;              // 88 * 288, start of processed image
-    localparam int LAST_ROW      = 286;
+    localparam int LAST_ROW      = 287;
     localparam int LAST_WORD     = 87;
-    localparam int LAST_BORDER_ROW = 287;              // bottom border row (written as zeros)
  
-    localparam int FILL_WORDS = 2 * WORDS_PER_ROW;     // rows 0 and 1
-
     typedef enum logic [2:0] {IDLE, FILL, RD, SHIFT, CALC, WR, DONE} state_t;
     state_t state;
  
     // counters
-    logic [8:0]        i;        // row, 1..286
+    logic [8:0]        i;        // row, 0..287
     logic signed [7:0] k;        // word in row, -1..87 (-1 = preload step)
     logic              c;        // read phase: 0 = issue address, 1 = data arrives
-    logic [7:0]        n;        // prefill counter, 0..FILL_WORDS
+    logic [6:0]        n;        // prefill counter, 0..WORDS_PER_ROW
  
-    // rows 0 and 287 are not computed, only written as zeros
-    logic is_border;
-    assign is_border = (i == 9'd0) || (i == 9'(LAST_BORDER_ROW));
+    // boundary conditions: pixels outside the image copy the nearest edge pixel
+    logic first_row, last_row;
+    assign first_row = (i == 9'd0);
+    assign last_row  = (i == 9'(LAST_ROW));
  
     // window: [row][0=L, 1=C, 2=R], row 0 = i-1, row 1 = i, row 2 = i+1
     logic [31:0] win [0:2][0:2];
@@ -67,26 +65,30 @@ module acc (
 
     logic [6:0]  lb_col;                    // column word k+1
     logic [31:0] lb0_q, lb1_q;              // asynchronous read data
-    logic        lb_update;                 // move column lb_col down one row
-    logic        lb0_we, lb1_we;
-    logic [6:0]  lb0_waddr, lb1_waddr;
+    logic [31:0] below;                     // word of row i+1
+    logic        lb_we;                     // both buffers are written together
+    logic [6:0]  lb_waddr;
     logic [31:0] lb0_wdata;
 
     assign lb_col    = 7'(k + 8'sd1);
     assign lb0_q     = lb0[lb_col];
     assign lb1_q     = lb1[lb_col];
-    assign lb_update = (state == RD) && c && (k != LAST_WORD);
+    // there is no row below the last row: copy row i instead
+    assign below     = last_row ? lb1_q : dataR;
 
-    // prefill: word n-1 arrives while the address of word n is issued
-    assign lb0_we    = lb_update || (state == FILL && n >= 8'd1 && n <= 8'(WORDS_PER_ROW));
-    assign lb1_we    = lb_update || (state == FILL && n >  8'(WORDS_PER_ROW));
-    assign lb0_waddr = (state == FILL) ? 7'(n - 8'd1) : lb_col;
-    assign lb1_waddr = (state == FILL) ? 7'(n - 8'(WORDS_PER_ROW + 1)) : lb_col;
+    // prefill: word n-1 of row 0 arrives while address n is issued, and goes
+    // into both buffers because row 0 is also the row "above" row 0.
+    // Afterwards: move column lb_col down one row.
+    assign lb_we     = (state == FILL && n != 7'd0) ||
+                       (state == RD && c && k != LAST_WORD);
+    assign lb_waddr  = (state == FILL) ? 7'(n - 7'd1) : lb_col;
     assign lb0_wdata = (state == FILL) ? dataR : lb1_q;
 
     always_ff @(posedge clk) begin
-        if (lb0_we) lb0[lb0_waddr] <= lb0_wdata;
-        if (lb1_we) lb1[lb1_waddr] <= dataR;
+        if (lb_we) begin
+            lb0[lb_waddr] <= lb0_wdata;
+            lb1[lb_waddr] <= below;         // in FILL: i = 0, so below = dataR
+        end
     end
 
     // ---------------------------------------------------------------
@@ -97,12 +99,14 @@ module acc (
     always_comb begin
         for (int r = 0; r < 3; r++) begin
             // memory is little-endian: pixel p of a word is in bits [8p +: 8]
-            px[r][0] = win[r][0][31:24];    // L[3] (last pixel of previous word)
+            // L[3] = last pixel of previous word; left image edge copies C[0]
+            px[r][0] = (k == 8'sd0) ? win[r][1][7:0] : win[r][0][31:24];
             px[r][1] = win[r][1][7:0];      // C[0]
             px[r][2] = win[r][1][15:8];     // C[1]
             px[r][3] = win[r][1][23:16];    // C[2]
             px[r][4] = win[r][1][31:24];    // C[3]
-            px[r][5] = win[r][2][7:0];      // R[0] (first pixel of next word)
+            // R[0] = first pixel of next word; right image edge copies C[3]
+            px[r][5] = (k == LAST_WORD) ? win[r][1][31:24] : win[r][2][7:0];
         end
     end
  
@@ -151,11 +155,11 @@ module acc (
         finish = 1'b0;
  
         case (state)
-            FILL: if (n != 8'(FILL_WORDS)) begin    // rows 0 and 1 = words 0..175
+            FILL: if (n != 7'(WORDS_PER_ROW)) begin  // row 0 = words 0..87
                     en   = 1'b1;
                     addr = 16'(n);
                 end
-            RD: if (!c && k != LAST_WORD) begin
+            RD: if (!c && k != LAST_WORD && !last_row) begin
                     en   = 1'b1;
                     we   = 1'b0;
                     addr = rd_row * WORDS_PER_ROW + col;
@@ -182,7 +186,7 @@ module acc (
     always_ff @(posedge clk) begin
         if (reset) begin
             state  <= IDLE;
-            i      <= 9'd1;
+            i      <= 9'd0;
             k      <= -8'sd1;
             c      <= 1'b0;
             n      <= '0;
@@ -191,34 +195,31 @@ module acc (
         end else begin
             case (state)
                 IDLE: if (start) begin
-                    i      <= 9'd0;          // row 0 = top border: write zeros
-                    k      <= 8'sd0;
-                    c      <= 1'b0;
-                    n      <= '0;
-                    outreg <= '0;
-                    clear_window();
-                    state  <= WR;
+                    i     <= 9'd0;
+                    k     <= -8'sd1;
+                    c     <= 1'b0;
+                    n     <= '0;
+                    state <= FILL;
                 end
  
                 FILL: begin
-                    if (n != 8'(FILL_WORDS))
-                        n <= n + 8'd1;
+                    if (n != 7'(WORDS_PER_ROW))
+                        n <= n + 7'd1;
                     else                             // last word is being stored
                         state <= RD;
                 end
  
                 RD: begin
                     if (k == LAST_WORD) begin
-                        // no word 88 in a row: zero-fill, skip the read
-                        for (int r = 0; r < 3; r++) newcol[r] <= '0;
+                        // no word 88 in a row: skip the read (right edge is mirrored)
                         state <= SHIFT;
                     end else if (!c) begin
                         c <= 1'b1;
                     end else begin
                         // data of the address issued in the previous cycle arrives now
-                        newcol[0] <= lb0_q;          // row i-1
+                        newcol[0] <= first_row ? lb1_q : lb0_q;  // row i-1
                         newcol[1] <= lb1_q;          // row i
-                        newcol[2] <= dataR;          // row i+1
+                        newcol[2] <= below;                      // row i+1
                         c         <= 1'b0;
                         state     <= SHIFT;
                     end
@@ -245,19 +246,11 @@ module acc (
                 WR: begin
                     if (k != LAST_WORD) begin
                         k     <= k + 8'sd1;
-                        state <= is_border ? WR : RD;   // border rows: keep writing zeros
-                    end else if (i != LAST_BORDER_ROW) begin
-                        i <= i + 9'd1;
-                        if (i == LAST_ROW) begin        // next row is the bottom border
-                            k      <= 8'sd0;
-                            outreg <= '0;
-                            state  <= WR;
-                        end else begin                  // next row is a normal row
-                            k      <= -8'sd1;
-                            clear_window();
-                            // after the top border, load rows 0 and 1 first
-                            state  <= (i == 9'd0) ? FILL : RD;
-                        end
+                        state <= RD;
+                    end else if (!last_row) begin
+                        i     <= i + 9'd1;
+                        k     <= -8'sd1;
+                        state <= RD;
                     end else
                         state <= DONE;
                 end
